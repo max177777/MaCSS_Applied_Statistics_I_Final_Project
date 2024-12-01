@@ -1,0 +1,585 @@
+---
+title: "Electric Vehicle Adoption in Bay Area"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+
+**Library all packages**
+```{r}
+library(httr)
+library(jsonlite)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(dagitty)
+library(lfe)
+```
+
+**Load the air quality data from U.S. Envrionmental Protection Agency (EPA) API**
+```{r}
+# API key
+api_key <- "dunwren65"
+user_email <- "max_xu@berkeley.edu"
+
+# Define counties and their codes
+bay_area <- data.frame(County = c("Alameda", "Contra Costa", "Marin", "Napa", "San Mateo", "Santa Clara", "Solano", "Sonoma", "San Francisco"),
+                       County_Code = c("001", "013", "041", "055", "081", "085", "095", "097", "075"))
+
+# Define pollutants and their parameter codes
+pollutants <- data.frame(Pollutant = c("PM2.5", "PM10", "Ozone", "NOx", "COx"),
+                         Param_Code = c("88101", "81102", "44201", "42602", "42101"))
+
+# Initialize an empty dataframe
+air_quality_data <- data.frame()
+
+# Fetch data for each county, pollutant, and year range
+for (i in 1:nrow(bay_area)) {
+  for (j in 1:nrow(pollutants)) {
+    for (year in 2011:2023) {
+       # Print progress for the current iteration
+      print(paste("Processing", bay_area$County[i], pollutants$Pollutant[j], "for year", year))
+      
+      # Define start and end dates for each year
+      bdate <- paste0(year, "0101")  # Start date (YYYYMMDD)
+      edate <- paste0(year, "1231")  # End date (YYYYMMDD)
+      
+      # Define parameters
+      params <- list(
+        email = user_email,
+        key = api_key,
+        param = pollutants$Param_Code[j],
+        bdate = bdate,
+        edate = edate,
+        state = "06",  # California state code
+        county = bay_area$County_Code[i]
+      )
+      
+      # API request
+      response <- GET("https://aqs.epa.gov/data/api/dailyData/byCounty", query = params)
+      
+      # Check for successful response
+      if (response$status_code == 200) {
+        data <- fromJSON(content(response, as = "text", encoding = "UTF-8"))
+        if (!is.null(data$Data) && nrow(as.data.frame(data$Data)) > 0) {
+          # Append results to the dataframe
+          county_data <- as.data.frame(data$Data)
+          county_data$County <- bay_area$County[i]
+          county_data$Pollutant <- pollutants$Pollutant[j]
+          air_quality_data <- bind_rows(air_quality_data, county_data)
+        } else {
+          print(paste("No data for", bay_area$County[i], pollutants$Pollutant[j], "in year", year))
+        }
+      } else {
+        print(paste("Error for", bay_area$County[i], pollutants$Pollutant[j], "in year", year, ":", response$status_code))
+      }
+    }
+  }
+}
+
+# Save the combined air quality data
+write.csv(air_quality_data, "air_quality_data_2011_2023.csv", row.names = FALSE)
+
+# Preview the data
+print(head(air_quality_data))
+
+```
+
+**Example for one year data, if the orignial one running too long**
+```{r}
+# API key
+#api_key <- "dunwren65"
+#user_email <- "max_xu@berkeley.edu"
+
+# Define counties and their codes
+#bay_area <- data.frame(County = c("Alameda", "Contra Costa", "Marin", "Napa", "San Mateo", "Santa Clara", "Solano", "Sonoma", "San Francisco"),
+#                      County_Code = c("001", "013", "041", "055", "081", "085", "095", "097", "075"))
+
+# Define pollutants and their parameter codes
+#pollutants <- data.frame(Pollutant = c("PM2.5", "PM10", "Ozone", "NOx", "COx"),
+#                         Param_Code = c("88101", "81102", "44201", "42602", "42101"))
+
+# Initialize an empty dataframe
+#air_quality_data <- data.frame()
+
+# Fetch data for each county and pollutant
+#for (i in 1:nrow(bay_area)) {
+  #for (j in 1:nrow(pollutants)) {
+    # Define parameters
+   # params <- list(
+    #  email = user_email,
+    #  key = api_key,
+    #  param = pollutants$Param_Code[j],
+    #  bdate = "20230101",  
+    #  edate = "20231231",  
+     # state = "06",        
+     # county = bay_area$County_Code[i])
+    
+    # API request
+   # response <- GET("https://aqs.epa.gov/data/api/dailyData/byCounty", query = params)
+    
+    # Check for successful response
+   # if (response$status_code == 200) {
+    #  data <- fromJSON(content(response, as = "text", encoding = "UTF-8"))
+    #  if (!is.null(data$Data) && nrow(as.data.frame(data$Data)) > 0) {
+    #    # Append results to the dataframe
+     #   county_data <- as.data.frame(data$Data)
+     #   county_data$County <- bay_area$County[i]
+     #   county_data$Pollutant <- pollutants$Pollutant[j]
+     #   air_quality_data <- bind_rows(air_quality_data, county_data)
+     # } else {
+     #   print(paste("No data for", bay_area$County[i], pollutants$Pollutant[j]))
+     # }
+  #  } else {
+   #   print(paste("Error for", bay_area$County[i], pollutants$Pollutant[j], ":", response$status_code))}}}
+
+# Save the combined air quality data
+#write.csv(air_quality_data, "air_quality_data.csv", row.names = FALSE)
+
+# Preview the data
+#print(air_quality_data)
+```
+
+**Load EV data that I already downloaded from California Energy Commission (CEC)**
+```{r}
+# Load Local Excel files path
+path_to_New_ZEV_Sales <- "C:/Users/max_x/ucb/MaCSS - Final Project/New_ZEV_Sales_Last_updated_08-06-2024_ada.xlsx"
+path_to_Vehicle_Population <- "C:/Users/max_x/ucb/MaCSS - Final Project/Vehicle_Population_Last_updated_04-30-2024_ada.xlsx"
+
+# Load the data
+suppressWarnings(zev_sales <- read_excel(path_to_New_ZEV_Sales, sheet = "County"))
+suppressWarnings(vehicle_population <- read_excel(path_to_Vehicle_Population, sheet = "County"))
+
+# Preview
+head(zev_sales)
+head(vehicle_population)
+```
+
+**Cleaning EV data**
+```{r}
+# Define the nine Bay Area counties
+bay_area_counties <- c("Alameda", "Contra Costa", "Marin", "Napa",
+                       "San Mateo", "Santa Clara", "Solano", "Sonoma", "San Francisco")
+
+# 1. Clean and aggregate `zev_sales`
+zev_sales_filtered <- zev_sales %>%
+  filter(County %in% bay_area_counties) %>%  
+  group_by(County, Data_Year) %>% 
+  summarize(Sale_for_Zero_Emission_Vehicles = sum(`Number of Vehicles`, na.rm = TRUE)) 
+
+# Save the cleaned dataset
+write.csv(zev_sales_filtered, "zev_sales_filtered.csv", row.names = FALSE)
+
+# 2. Clean and aggregate `vehicle_population`
+vehicle_population_filtered <- vehicle_population %>%
+  filter(County %in% bay_area_counties) %>%  
+  group_by(County, `Data Year`, `Dashboard Fuel Type Group`) %>%  
+  summarize(Total_Vehicles = sum(`Number of Vehicles`, na.rm = TRUE))  
+
+# Save the cleaned dataset
+write.csv(vehicle_population_filtered, "vehicle_population_filtered.csv", row.names = FALSE)
+
+# Preview the cleaned datasets
+print(zev_sales_filtered)
+print(vehicle_population_filtered)
+```
+
+**Visualization about EV data**
+```{r}
+# Plot ZEV Sales Trends
+ggplot(zev_sales_filtered, aes(x = Data_Year, y = Sale_for_Zero_Emission_Vehicles, color = County)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Trends in Zero-Emission Vehicle Sales by County (2024 only have first half year)",
+       x = "Year",
+       y = "Number of Zero-Emission Vehicles Sold",
+       color = "County") +
+  theme_minimal()
+```
+
+```{r}
+# Plot Vehicle Population Trends
+ggplot(vehicle_population_filtered, aes(x = `Data Year`, y = Total_Vehicles, color = County)) +
+  geom_line(linewidth = 1) +  
+  geom_point() +
+  facet_wrap(~`Dashboard Fuel Type Group`, scales = "free_y") +
+  labs(title = "Trends in Vehicle Population by County and Fuel Type",
+       x = "Year",
+       y = "Total Number of Vehicles",
+       color = "County") +
+  theme_minimal()
+```
+
+```{r}
+# Filter data for a specific year (2023)
+zev_sales_2023 <- zev_sales_filtered %>% filter(Data_Year == 2023)
+
+# Bar Plot for 2023 ZEV Sales
+ggplot(zev_sales_2023, aes(x = County, y = Sale_for_Zero_Emission_Vehicles, fill = County)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Zero-Emission Vehicle Sales by County (2023)",
+       x = "County",
+       y = "Number of Vehicles Sold") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Filter data for a specific year (2022)
+zev_sales_2022 <- zev_sales_filtered %>% filter(Data_Year == 2022)
+
+# Bar Plot for 2022 ZEV Sales
+ggplot(zev_sales_2022, aes(x = County, y = Sale_for_Zero_Emission_Vehicles, fill = County)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Zero-Emission Vehicle Sales by County (2022)",
+       x = "County",
+       y = "Number of Vehicles Sold") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Combine data for 2021, 2022 and 2023
+zev_sales_combined <- zev_sales_filtered %>%
+  filter(Data_Year %in% c(2021, 2022, 2023))  
+
+# Bar plot with dodge for comparison
+ggplot(zev_sales_combined, aes(x = County, y = Sale_for_Zero_Emission_Vehicles, fill = factor(Data_Year))) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  labs(title = "Zero-Emission Vehicle Sales Comparison (2021 vs 2022 vs 2023)",
+       x = "County",
+       y = "Number of Vehicles Sold",
+       fill = "Year") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Faceted Bar Chart for EV sales
+ggplot(zev_sales_filtered, aes(x = factor(`Data_Year`), y =Sale_for_Zero_Emission_Vehicles, fill = County)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ County, scales = "free_y") + 
+  labs(title = "Zero-Emission Vehicle Sales by County and Year (2024 only have first half year)",
+       x = "Year",
+       y = "ero-Emission Vehicle Sales",
+       fill = "County") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  
+        strip.text = element_text(size = 10, face = "bold"))
+```
+
+**Create EV Adoption Rate**
+```{r}
+# Filter for Electric Vehicles
+ev_population <- vehicle_population_filtered %>%
+  filter(`Dashboard Fuel Type Group` %in% c("Battery Electric", "Fuel Cell (FCEV)", "Plug-in Hybrid (PHEV)")) %>%
+  group_by(County, `Data Year`) %>%
+  summarize(Total_EVs = sum(Total_Vehicles, na.rm = TRUE))
+
+# Total Vehicle Population by County and Year
+total_population <- vehicle_population_filtered %>%
+  group_by(County, `Data Year`) %>%
+  summarize(Total_Vehicles = sum(Total_Vehicles, na.rm = TRUE))
+
+# Calculate EV Adoption Rate
+ev_adoption_rate <- ev_population %>%
+  left_join(total_population, by = c("County", "Data Year")) %>%
+  mutate(Adoption_Rate = (Total_EVs / Total_Vehicles) * 100)
+
+# Visualize EV Adoption Rate
+ggplot(ev_adoption_rate, aes(x = `Data Year`, y = Adoption_Rate, color = County)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  labs(title = "Electric Vehicle Adoption Rate by County",
+       x = "Year",
+       y = "EV Adoption Rate (%)",
+       color = "County") +
+  theme_minimal()
+```
+
+```{r}
+# Faceted Bar Chart for EV Adoption Rates
+ggplot(ev_adoption_rate, aes(x = factor(`Data Year`), y = Adoption_Rate, fill = factor(`Data Year`))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ County, scales = "free_y") +  
+  labs(title = "EV Adoption Rate Trend by County and Year",
+       x = "Year",
+       y = "EV Adoption Rate (%)",
+       fill = "Year") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        strip.text = element_text(size = 10, face = "bold"))
+```
+
+**Cleaning Air quality data**
+```{r}
+# Clean and refine the data
+air_quality_data_cleaned <- air_quality_data %>%
+  # Select relevant columns
+  dplyr::select(
+    date_local, County = county, Pollutant, arithmetic_mean, aqi
+  ) %>%
+  # Rename columns for clarity
+  dplyr::rename(
+    Date = date_local,
+    Measurement = arithmetic_mean,
+    AQI = aqi
+  ) %>%
+  # Convert `Date` column to Date format
+  mutate(Date = as.Date(Date)) %>%
+  # Remove rows with missing or invalid measurements
+  filter(!is.na(Measurement) & !is.na(AQI))
+
+# View the cleaned data
+print(air_quality_data_cleaned)
+
+# Save the cleaned dataset
+write.csv(air_quality_data_cleaned, "air_quality_data_cleaned.csv", row.names = FALSE)
+```
+
+```{r}
+# Remove same rows, because there are many monitors 
+air_quality_data_cleaned <- air_quality_data_cleaned %>%
+  distinct()
+
+# Preview the deduplicated data
+print(air_quality_data_cleaned)
+
+# Save the deduplicated dataset
+write.csv(air_quality_data_cleaned, "air_quality_data_cleaned_deduplicated.csv", row.names = FALSE)
+```
+
+```{r}
+# Extract the year from the Date column
+air_quality_data_cleaned <- air_quality_data_cleaned %>%
+  mutate(Year = as.numeric(format(Date, "%Y")))
+
+# Summarize the data to calculate the mean AQI for each Year and County
+yearly_mean_aqi <- air_quality_data_cleaned %>%
+  group_by(Year, County) %>%
+  summarize(
+    Mean_AQI = mean(AQI, na.rm = TRUE)  # Calculate mean AQI
+  ) %>%
+  ungroup()
+
+# Preview the resulting dataset
+print(yearly_mean_aqi)
+
+# Save the summarized data to a CSV file
+write.csv(yearly_mean_aqi, "yearly_mean_aqi.csv", row.names = FALSE)
+```
+
+**DAG Relationship Map for this topic**
+```{r}
+# DAG Relationship (just show the case, because the relationship may not be Acyclic)
+dag <- dagitty("dag {EV_Adoption -> Air_Quality
+                     Population_Density -> EV_Adoption
+                     Population_Density -> Air_Quality
+                     Industrial_Activity -> Air_Quality}")
+plot(dag)
+```
+
+**t_test**
+```{r}
+# Subset for urban and suburban areas based on population density
+urban_aqi <- air_quality_data_cleaned %>% filter(County %in% c("San Francisco"))
+suburban_aqi <- air_quality_data_cleaned %>% filter(County %in% c("Alameda", "San Mateo", "Contra Costa, santa Clara"))
+rural_aqi <-  air_quality_data_cleaned %>% filter(County %in% c("Solano", "Marin", "Sonoma", "Napa"))
+
+# Perform t-test
+t_test_result <- t.test(urban_aqi$AQI, suburban_aqi$AQI)
+print(t_test_result)
+```
+```{r}
+# Print Hypothesis Testing Results
+cat("Hypothesis Testing:\n",
+    "Null Hypothesis (H0): The mean AQI in urban areas is equal to the mean AQI in suburban areas (μ_urban = μ_suburban).\n",
+    "Alternative Hypothesis (Ha): The mean AQI in urban areas is not equal to the mean AQI in suburban areas (μ_urban ≠ μ_suburban).\n\n",
+    
+    "Test Statistic:\n",
+    "t = -18.02: The t-value indicates the difference between the group means relative to the variability in the data.\n",
+    "A large absolute t-value (like -18.02) suggests a significant difference between the two groups.\n\n",
+    
+    "Degrees of Freedom:\n",
+    "df = 34462: The degrees of freedom approximate the sample size and variability in the data.\n\n",
+    
+    "P-value:\n",
+    "p-value < 2.2e-16: The probability of observing a difference as extreme as the one found, assuming the null hypothesis is true.\n",
+    "A p-value this small indicates overwhelming evidence to reject the null hypothesis.\n\n",
+    
+    "Confidence Interval:\n",
+    "95% Confidence Interval: [-2.382176, -1.914797]:\n",
+    "The difference in mean AQI between urban and suburban areas is estimated to fall between -2.38 and -1.91 with 95% confidence.\n",
+    "Since the confidence interval does not include 0, it further supports rejecting the null hypothesis.\n\n",
+    
+    "Sample Means:\n",
+    "Mean of x (urban): 23.50.\n",
+    "Mean of y (suburban): 25.65.\n",
+    "Suburban areas have a higher mean AQI compared to urban areas, suggesting worse air quality in suburban areas.\n"
+)
+```
+
+**Regression Model**
+```{r}
+print(yearly_mean_aqi)
+print(ev_adoption_rate)
+```
+**Merge Dataset**
+```{r}
+# Rename columns for consistency
+ev_adoption_rate <- ev_adoption_rate %>%
+  rename(Year = `Data Year`)
+
+# Merge the datasets
+merged_data <- yearly_mean_aqi %>%
+  inner_join(ev_adoption_rate, by = c("Year", "County"))
+
+# Preview the merged dataset
+print(merged_data)
+```
+
+**Simple Regression Model**
+```{r}
+# Fit a simple linear regression model
+model <- lm(Mean_AQI ~ Adoption_Rate, data = merged_data)
+
+# Display the model summary
+summary(model)
+```
+```{r}
+ggplot(merged_data, aes(x = Adoption_Rate, y = Mean_AQI)) +
+  geom_point(aes(color = County)) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship Between EV Adoption Rate and Mean AQI",
+    x = "EV Adoption Rate (%)",
+    y = "Mean AQI"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+print("Mean AQI=25.9365 − 0.9496 × Adoption Rate")
+print("There is a negative relationship between EV adoption rate and air pollution, but the evidence is not strong enough for definitive conclusions.The model has a low R-squared value, suggesting other factors influence AQI significantly.")
+```
+
+**Multiple Regression Model with three separate dummy variables (Urban, Suburban, Rural)**
+```{r}
+# Step 1: Add a Region Category
+merged_data <- merged_data %>%
+  mutate(Region = case_when(
+      County %in% c("San Francisco") ~ "Urban",
+      County %in% c("Alameda", "San Mateo", "Contra Costa", "Santa Clara") ~ "Suburban",
+      County %in% c("Solano", "Marin", "Sonoma", "Napa") ~ "Rural",
+      TRUE ~ "Unknown"))
+
+# Step 2: Add three separate dummy variables
+merged_data <- merged_data %>%
+  mutate(
+    Urban = ifelse(County %in% c("San Francisco"), 1, 0),
+    Suburban = ifelse(County %in% c("Alameda", "San Mateo", "Contra Costa", "Santa Clara"), 1, 0),
+    Rural = ifelse(County %in% c("Solano", "Marin", "Sonoma", "Napa"), 1, 0)
+  )
+
+# View the updated data with new columns
+print(merged_data)
+```
+
+```{r}
+#Run a Multiple Regression Model
+regression_model <- lm(Mean_AQI ~ Urban + Suburban + Rural + Adoption_Rate,data = merged_data)
+
+# View the summary of the regression model
+summary(regression_model)
+```
+```{r}
+cat("Coefficients:
+1. Intercept (β₀ = 25.46):
+   - The predicted mean AQI for rural areas when Adoption_Rate = 0 (before EV adoption milestones).
+
+2. Urban (β₁ = -0.9995):
+   - Urban areas have, on average, a slightly lower AQI than rural areas.
+   - However, the p-value (0.3442) indicates this difference is not statistically significant.
+
+3. Suburban (β₂ = 1.558):
+   - Suburban areas have a mean AQI that is 1.56 units higher than rural areas.
+   - The p-value (0.0228) indicates this difference is statistically significant at the 5% level.
+
+4. Rural (β₃ = NA):
+   - The rural variable is omitted because it is the baseline category (collinearity).
+
+5. Adoption_Rate (β₄ = -1.0863):
+   - For each 1% increase in EV adoption, the mean AQI decreases by approximately 1.09 units.
+   - The p-value (0.0315) indicates this effect is statistically significant at the 5% level.
+
+Model Fit:
+- Residual Standard Error: 3.366
+  - Indicates the average deviation of observed AQI values from the predicted values.
+  - A smaller value suggests better model accuracy.
+
+- R-squared (R² = 0.1003):
+  - About 10% of the variation in mean AQI is explained by the predictors in the model.
+  - This indicates a relatively low explanatory power, suggesting other variables may influence AQI.
+
+- Adjusted R-squared (R_adj² = 0.07603):
+  - Adjusts R² for the number of predictors. Lower than R², it reflects the model's limited ability to generalize.
+
+- F-statistic: 4.127, p-value = 0.008138
+  - Tests the joint significance of all predictors.
+  - The small p-value indicates the predictors are collectively significant.
+")
+
+```
+```{r}
+cat("Overall, EV adoption improves air quality (lower AQI), suggesting the effectiveness of promoting EV usage. While Urban areas do not show a statistically significant difference in AQI compared to Rural areas, Suburban areas exhibit significantly worse air quality, with an AQI increase of 1.558 units. This emphasizes the need to address suburban-specific contributors to air pollution.")
+```
+
+**Difference-in-Differences (DiD) analysis (pre-COVID era and the post-COVID era)**
+```{r}
+# Define median adoption rate for grouping
+median_adoption_rate <- median(merged_data$Adoption_Rate, na.rm = TRUE)
+
+# Add treatment indicator
+merged_data <- merged_data %>%
+  mutate(Treatment = ifelse(Adoption_Rate > median_adoption_rate, 1, 0))
+
+# Preview the dataset
+print(head(merged_data))
+```
+
+```{r}
+# Add a time period pre-COVID era and the post-COVID era
+merged_data <- merged_data %>%
+  mutate(Post = ifelse(Year >= 2020, 1, 0))
+
+# Preview the dataset
+print(merged_data)
+```
+```{r}
+# Run the DiD regression
+did_model <- lm(Mean_AQI ~ Treatment * Post, data = merged_data)
+
+# Display model summary
+summary(did_model)
+```
+```{r}
+# Aggregate data by group and year
+agg_data <- merged_data %>%
+  group_by(Year, Treatment) %>%
+  summarize(Mean_AQI = mean(Mean_AQI, na.rm = TRUE), .groups = "drop")
+
+# Create the plot
+ggplot(agg_data, aes(x = Year, y = Mean_AQI, color = as.factor(Treatment), group = Treatment)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(
+    title = "Difference-in-Differences Analysis: Impact of EV Adoption on AQI",
+    x = "Year",
+    y = "Mean AQI",
+    color = "Group"
+  ) +
+  theme_minimal()
+```
+
